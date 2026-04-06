@@ -22,7 +22,7 @@ export const load = ({ cookies }) => {
 ```
 
 ```svelte
-//src/routes/+page.svelte
+// src/routes/+page.svelte
 <script lang="ts">
   import { createSecureFetch } from 'svelte-apiguard';
   import { page } from '$app/stores';
