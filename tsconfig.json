@@ -1,0 +1,12 @@
+{
+  "extends": "@sveltejs/kit/tsconfig.json",
+  "compilerOptions": {
+    "moduleResolution": "NodeNext",
+    "module": "NodeNext",
+    "declaration": true,
+    "declarationDir": "./dist",
+    "outDir": "./dist",
+    "lib": ["esnext", "dom"],
+  },
+  "include": ["src/**/*.ts"],
+}
