@@ -1,3 +1,4 @@
+```typescript
 //src/hooks.server.ts
 import { apiGuard } from 'svelte-apiguard'; // Import z Twojej biblioteki
 import type { Handle } from '@sveltejs/kit';
@@ -8,9 +9,9 @@ export const handle: Handle = async ({ event, resolve }) => {
   
   return resolve(event);
 };
+```
 
-
-
+```typescript
 // src/routes/+layout.server.ts
 export const load = ({ cookies }) => {
   return {
@@ -18,9 +19,9 @@ export const load = ({ cookies }) => {
     apiToken: cookies.get('x-api-guard-token') 
   };
 };
+```
 
-
-
+```svelte
 //src/routes/+page.svelte
 <script lang="ts">
   import { createSecureFetch } from 'svelte-apiguard';
@@ -37,3 +38,4 @@ export const load = ({ cookies }) => {
 </script>
 
 <button on:click={getData}>Pobierz dane</button>
+```
