@@ -81,9 +81,13 @@ export const createApiGuard = (options: ApiGuardOptions = {}) => {
       const originalData = await response.text();
       const encryptedData = encrypt(originalData, token); // Twoja funkcja AES
 
+      const newHeaders = new Headers(response.headers);
+      newHeaders.delete("content-length");
+      newHeaders.delete("content-encoding");
+
       return new Response(JSON.stringify({ _enc: encryptedData }), {
         status: response.status,
-        headers: response.headers,
+        headers: newHeaders,
       });
     }
 

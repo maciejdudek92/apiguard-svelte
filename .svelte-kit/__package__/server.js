@@ -54,7 +54,7 @@ export var createApiGuard = function (options) {
     if (options === void 0) { options = {}; }
     var _a = options.apiPrefix, apiPrefix = _a === void 0 ? "/api" : _a, _b = options.cookieName, cookieName = _b === void 0 ? "x-api-guard-token" : _b, _c = options.headerName, headerName = _c === void 0 ? "x-api-guard-token" : _c, _d = options.dev, dev = _d === void 0 ? false : _d;
     return function (event, resolve) { return __awaiter(void 0, void 0, void 0, function () {
-        var request, url, cookies, isApi, token, requestToken, response, shouldEncrypt, originalData, encryptedData;
+        var request, url, cookies, isApi, token, requestToken, response, shouldEncrypt, originalData, encryptedData, newHeaders;
         var _a;
         return __generator(this, function (_b) {
             switch (_b.label) {
@@ -91,9 +91,12 @@ export var createApiGuard = function (options) {
                 case 2:
                     originalData = _b.sent();
                     encryptedData = encrypt(originalData, token);
+                    newHeaders = new Headers(response.headers);
+                    newHeaders.delete("content-length");
+                    newHeaders.delete("content-encoding");
                     return [2 /*return*/, new Response(JSON.stringify({ _enc: encryptedData }), {
                             status: response.status,
-                            headers: response.headers,
+                            headers: newHeaders,
                         })];
                 case 3: return [2 /*return*/, response];
             }
