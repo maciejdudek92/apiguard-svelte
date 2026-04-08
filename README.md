@@ -1,12 +1,12 @@
 ```typescript
 //src/hooks.server.ts
-import { apiGuard } from 'svelte-apiguard'; // Import z Twojej biblioteki
+import { createApiGuard } from 'apiguard';
 import type { Handle } from '@sveltejs/kit';
 
+const guard = createApiGuard();
+
 export const handle: Handle = async ({ event, resolve }) => {
-  // apiGuard sprawdza token i ewentualnie rzuca 403
-  apiGuard(event); 
-  
+  guard(event);
   return resolve(event);
 };
 ```
@@ -15,8 +15,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 // src/routes/+layout.server.ts
 export const load = ({ cookies }) => {
   return {
-    // To musi być ta sama nazwa ciasteczka co w bibliotece!
-    apiToken: cookies.get('x-api-guard-token') 
+    apiToken: cookies.get('x-api-guard-token')
   };
 };
 ```
@@ -38,4 +37,11 @@ export const load = ({ cookies }) => {
 </script>
 
 <button on:click={getData}>Pobierz dane</button>
+```
+
+
+```
+npm run build
+npm link
+npm link svelte-apiguard
 ```

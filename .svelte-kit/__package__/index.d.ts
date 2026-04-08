@@ -1,3 +1,3 @@
 export type { ApiGuardOptions } from "./types";
-export { apiGuard } from "./server";
-export { createSecureFetch } from "./client";
+export { createApiGuard } from "./server";
+export { secureFetch } from "./client";
