@@ -1,32 +1,53 @@
 import { page } from "$app/state";
 
-/**
- * Deszyfruje dane zakodowane AES-256-GCM po stronie serwera.
- * @param encObject Obiekt zawierający iv, data i tag w Base64
- * @param sessionToken Surowy token (UUID) lub wynik generateEncryptionKey
- */
-async function decrypt(
-  encObject: { iv: string; data: string; tag: string },
-  sessionToken: string,
-): Promise<string> {
-  const { iv, data, tag } = encObject;
+// Cache dla klucza CryptoKey na kliencie
+let cachedToken: string | null = null;
+let cachedKey: CryptoKey | null = null;
 
-  // 1. Przygotowanie klucza (Musi być identyczne z crypto.createHash("sha256") na serwerze)
+async function getDecryptionKey(sessionToken: string): Promise<CryptoKey> {
+  if (cachedToken === sessionToken && cachedKey) {
+    return cachedKey;
+  }
+
+  const cryptoObj =
+    typeof window !== "undefined" ? window.crypto : globalThis.crypto;
+
+  if (!cryptoObj || !cryptoObj.subtle) {
+    throw new Error(
+      "Web Crypto API (crypto.subtle) is not available. " +
+        "This usually happens when the site is not served over HTTPS or localhost (Secure Context).",
+    );
+  }
+
   const encoder = new TextEncoder();
-  const keyRaw = await crypto.subtle.digest(
+  const keyRaw = await cryptoObj.subtle.digest(
     "SHA-256",
     encoder.encode(sessionToken),
   );
 
-  const key = await crypto.subtle.importKey(
+  cachedKey = await cryptoObj.subtle.importKey(
     "raw",
     keyRaw,
     { name: "AES-GCM" },
     false,
     ["decrypt"],
   );
+  cachedToken = sessionToken;
 
-  // 2. Dekodowanie Base64 do Uint8Array
+  return cachedKey;
+}
+
+/**
+ * Deszyfruje dane zakodowane AES-256-GCM po stronie serwera.
+ * @param encData String w Base64 (IV + Data + Tag)
+ * @param sessionToken Surowy token (UUID) lub wynik generateEncryptionKey
+ */
+async function decrypt(encData: string, sessionToken: string): Promise<string> {
+  const key = await getDecryptionKey(sessionToken);
+
+  const cryptoObj =
+    typeof window !== "undefined" ? window.crypto : globalThis.crypto;
+
   const base64ToUint8 = (base64: string) => {
     const binaryString = atob(base64);
     const bytes = new Uint8Array(binaryString.length);
@@ -36,26 +57,24 @@ async function decrypt(
     return bytes;
   };
 
-  const ivBuffer = base64ToUint8(iv);
-  const dataBuffer = base64ToUint8(data);
-  const tagBuffer = base64ToUint8(tag);
+  // 1. Zoptymalizowany parsing jednej wartości Base64
+  const bytes = base64ToUint8(encData);
 
-  // 3. Łączenie Ciphertextu i Auth Tagu
-  // Web Crypto API wymaga, aby tag był doklejony na końcu encrypted data
-  const combinedBuffer = new Uint8Array(dataBuffer.length + tagBuffer.length);
-  combinedBuffer.set(dataBuffer);
-  combinedBuffer.set(tagBuffer, dataBuffer.length);
+  // IV jest zawsze na pierwszych 12 bajtach
+  const ivBuffer = bytes.slice(0, 12);
+  // Sklejone dane + tag to reszta
+  const dataWithTagBuffer = bytes.slice(12);
 
-  // 4. Deszyfrowanie
+  // 2. Deszyfrowanie
   try {
-    const decryptedBuffer = await crypto.subtle.decrypt(
+    const decryptedBuffer = await cryptoObj.subtle.decrypt(
       {
         name: "AES-GCM",
         iv: ivBuffer,
         tagLength: 128, // Standardowa długość tagu w bitach (16 bajtów * 8)
       },
       key,
-      combinedBuffer,
+      dataWithTagBuffer,
     );
 
     return new TextDecoder().decode(decryptedBuffer);
@@ -66,59 +85,94 @@ async function decrypt(
     throw error;
   }
 }
-export const secureFetch = async (
+export interface SecureFetchInit extends RequestInit {
+  fetch?: typeof fetch;
+  token?: string;
+}
+
+export const secureFetch = async <T = any>(
   input: RequestInfo | URL,
-  init?: RequestInit,
-) => {
-  const pageData = page.data;
-  // Sprawdź dokładnie klucz, pod którym przekazujesz token w load()
-  const token = pageData.apiToken || pageData.x_api_guard_token;
+  init?: SecureFetchInit,
+): Promise<T> => {
+  try {
+    let token = init?.token;
 
-  if (!token) {
-    console.warn("ApiGuard: No token found in page data. Requests might fail.");
-  }
-
-  const headers = new Headers(init?.headers);
-  if (token) headers.set("x-api-guard-token", token);
-
-  const request = await fetch(input, { ...init, headers });
-
-  if (
-    request.ok &&
-    request.headers.get("content-type")?.includes("application/json")
-  ) {
-    // Klonujemy odpowiedź, aby móc ją przeczytać jako JSON
-    const responseData = await request.json();
-
-    if (responseData._enc) {
-      if (!token) throw new Error("Missing token for decryption");
-
+    if (!token) {
       try {
-        const decryptedStr = await decrypt(responseData._enc, token);
-
-        // Zwracamy nową odpowiedź z odszyfrowanym stringiem
-        return new Response(decryptedStr, {
-          status: request.status,
-          headers: request.headers, // Zachowujemy oryginalne nagłówki
-        });
-      } catch (e) {
-        console.error(
-          "Decryption failed! Key mismatch (did date change?) or corrupted data.",
-          e,
-        );
-        // W razie błędu zwracamy oryginalny (zaszyfrowany) JSON, żeby nie "ubić" aplikacji całkowicie
-        return new Response(JSON.stringify(responseData), {
-          status: request.status,
-        });
+        const pageData = page.data;
+        token = pageData.apiToken || pageData.x_api_guard_token;
+      } catch {
+        // Ignorujemy brak $app/state po stronie serwera
       }
     }
 
-    // Jeśli nie było pola _enc, zwróć oryginalny JSON
-    return new Response(JSON.stringify(responseData), {
-      status: request.status,
-      headers: request.headers,
-    });
-  }
+    if (!token) {
+      if (typeof window !== "undefined") {
+        console.warn("ApiGuard: No token found. Requests might fail.");
+      }
+    }
 
-  return request;
+    const headers = new Headers(init?.headers);
+    if (token) headers.set("x-api-guard-token", token);
+
+    const fetcher = init?.fetch || fetch;
+    const request = await fetcher(input, { ...init, headers });
+
+    const contentType = request.headers.get("content-type");
+    let parsedData: any;
+
+    if (contentType?.includes("application/json")) {
+      const responseData = await request.json();
+
+      if (responseData._enc) {
+        if (!token) {
+          parsedData = responseData;
+        } else {
+          try {
+            const decryptedStr = await decrypt(responseData._enc, token);
+            parsedData = JSON.parse(decryptedStr);
+          } catch (e) {
+            console.error("Decryption failed!", e);
+            parsedData = responseData;
+          }
+        }
+      } else {
+        parsedData = responseData;
+      }
+    } else {
+      // Fallback dla odpowiedzi typu text lub innych
+      const textData = await request.text();
+      try {
+        parsedData = JSON.parse(textData);
+      } catch {
+        parsedData = { data: textData };
+      }
+    }
+
+    // --- Normalizacja Formatowania ---
+    // Jeżeli żądanie jest nieudane na poziomie HTTP (np status 403 z ApiGuard lub 500)
+    if (!request.ok) {
+      // SvelteKit najczęściej w rzucanych errorach umieszcza treść pod propercją `message`
+      const errorMessage =
+        parsedData?.message ||
+        parsedData?.error ||
+        `HTTP Error ${request.status}`;
+      return {
+        success: false,
+        data: null,
+        error: errorMessage,
+        status: request.status,
+      } as unknown as T;
+    }
+
+    // Jeśli sukces, to *ZAWSZE* bezwzględnie zamykamy odpowiedź serwera do property 'data'
+    return { success: true, data: parsedData } as unknown as T;
+  } catch (err: any) {
+    // Kiedy padnie kompletnie np sieć (Network Offline lub parsowanie)
+    return {
+      success: false,
+      data: null,
+      error: err?.message || "Wystąpił nieoczekiwany błąd podczas połączenia.",
+    } as unknown as T;
+  }
 };

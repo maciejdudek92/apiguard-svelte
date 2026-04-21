@@ -46,25 +46,50 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
     }
 };
 import { page } from "$app/state";
-/**
- * Deszyfruje dane zakodowane AES-256-GCM po stronie serwera.
- * @param encObject Obiekt zawierający iv, data i tag w Base64
- * @param sessionToken Surowy token (UUID) lub wynik generateEncryptionKey
- */
-function decrypt(encObject, sessionToken) {
+// Cache dla klucza CryptoKey na kliencie
+var cachedToken = null;
+var cachedKey = null;
+function getDecryptionKey(sessionToken) {
     return __awaiter(this, void 0, Promise, function () {
-        var iv, data, tag, encoder, keyRaw, key, base64ToUint8, ivBuffer, dataBuffer, tagBuffer, combinedBuffer, decryptedBuffer, error_1;
+        var cryptoObj, encoder, keyRaw;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0:
-                    iv = encObject.iv, data = encObject.data, tag = encObject.tag;
+                    if (cachedToken === sessionToken && cachedKey) {
+                        return [2 /*return*/, cachedKey];
+                    }
+                    cryptoObj = typeof window !== "undefined" ? window.crypto : globalThis.crypto;
+                    if (!cryptoObj || !cryptoObj.subtle) {
+                        throw new Error("Web Crypto API (crypto.subtle) is not available. " +
+                            "This usually happens when the site is not served over HTTPS or localhost (Secure Context).");
+                    }
                     encoder = new TextEncoder();
-                    return [4 /*yield*/, crypto.subtle.digest("SHA-256", encoder.encode(sessionToken))];
+                    return [4 /*yield*/, cryptoObj.subtle.digest("SHA-256", encoder.encode(sessionToken))];
                 case 1:
                     keyRaw = _a.sent();
-                    return [4 /*yield*/, crypto.subtle.importKey("raw", keyRaw, { name: "AES-GCM" }, false, ["decrypt"])];
+                    return [4 /*yield*/, cryptoObj.subtle.importKey("raw", keyRaw, { name: "AES-GCM" }, false, ["decrypt"])];
                 case 2:
+                    cachedKey = _a.sent();
+                    cachedToken = sessionToken;
+                    return [2 /*return*/, cachedKey];
+            }
+        });
+    });
+}
+/**
+ * Deszyfruje dane zakodowane AES-256-GCM po stronie serwera.
+ * @param encData String w Base64 (IV + Data + Tag)
+ * @param sessionToken Surowy token (UUID) lub wynik generateEncryptionKey
+ */
+function decrypt(encData, sessionToken) {
+    return __awaiter(this, void 0, Promise, function () {
+        var key, cryptoObj, base64ToUint8, bytes, ivBuffer, dataWithTagBuffer, decryptedBuffer, error_1;
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0: return [4 /*yield*/, getDecryptionKey(sessionToken)];
+                case 1:
                     key = _a.sent();
+                    cryptoObj = typeof window !== "undefined" ? window.crypto : globalThis.crypto;
                     base64ToUint8 = function (base64) {
                         var binaryString = atob(base64);
                         var bytes = new Uint8Array(binaryString.length);
@@ -73,82 +98,119 @@ function decrypt(encObject, sessionToken) {
                         }
                         return bytes;
                     };
-                    ivBuffer = base64ToUint8(iv);
-                    dataBuffer = base64ToUint8(data);
-                    tagBuffer = base64ToUint8(tag);
-                    combinedBuffer = new Uint8Array(dataBuffer.length + tagBuffer.length);
-                    combinedBuffer.set(dataBuffer);
-                    combinedBuffer.set(tagBuffer, dataBuffer.length);
-                    _a.label = 3;
-                case 3:
-                    _a.trys.push([3, 5, , 6]);
-                    return [4 /*yield*/, crypto.subtle.decrypt({
+                    bytes = base64ToUint8(encData);
+                    ivBuffer = bytes.slice(0, 12);
+                    dataWithTagBuffer = bytes.slice(12);
+                    _a.label = 2;
+                case 2:
+                    _a.trys.push([2, 4, , 5]);
+                    return [4 /*yield*/, cryptoObj.subtle.decrypt({
                             name: "AES-GCM",
                             iv: ivBuffer,
                             tagLength: 128, // Standardowa długość tagu w bitach (16 bajtów * 8)
-                        }, key, combinedBuffer)];
-                case 4:
+                        }, key, dataWithTagBuffer)];
+                case 3:
                     decryptedBuffer = _a.sent();
                     return [2 /*return*/, new TextDecoder().decode(decryptedBuffer)];
-                case 5:
+                case 4:
                     error_1 = _a.sent();
                     console.error("BŁĄD DESZYFROWANIA: Klucz nie pasuje lub dane są uszkodzone.");
                     throw error_1;
-                case 6: return [2 /*return*/];
+                case 5: return [2 /*return*/];
             }
         });
     });
 }
-export var secureFetch = function (input, init) { return __awaiter(void 0, void 0, void 0, function () {
-    var pageData, token, headers, request, responseData, decryptedStr, e_1;
-    var _a;
-    return __generator(this, function (_b) {
-        switch (_b.label) {
+export var secureFetch = function (input, init) { return __awaiter(void 0, void 0, Promise, function () {
+    var token, pageData, headers, fetcher, request, contentType, parsedData, responseData, decryptedStr, e_1, textData, errorMessage, err_1;
+    return __generator(this, function (_a) {
+        switch (_a.label) {
             case 0:
-                pageData = page.data;
-                token = pageData.apiToken || pageData.x_api_guard_token;
+                _a.trys.push([0, 12, , 13]);
+                token = init === null || init === void 0 ? void 0 : init.token;
                 if (!token) {
-                    console.warn("ApiGuard: No token found in page data. Requests might fail.");
+                    try {
+                        pageData = page.data;
+                        token = pageData.apiToken || pageData.x_api_guard_token;
+                    }
+                    catch (_b) {
+                        // Ignorujemy brak $app/state po stronie serwera
+                    }
+                }
+                if (!token) {
+                    if (typeof window !== "undefined") {
+                        console.warn("ApiGuard: No token found. Requests might fail.");
+                    }
                 }
                 headers = new Headers(init === null || init === void 0 ? void 0 : init.headers);
                 if (token)
                     headers.set("x-api-guard-token", token);
-                return [4 /*yield*/, fetch(input, __assign(__assign({}, init), { headers: headers }))];
+                fetcher = (init === null || init === void 0 ? void 0 : init.fetch) || fetch;
+                return [4 /*yield*/, fetcher(input, __assign(__assign({}, init), { headers: headers }))];
             case 1:
-                request = _b.sent();
-                if (!(request.ok &&
-                    ((_a = request.headers.get("content-type")) === null || _a === void 0 ? void 0 : _a.includes("application/json")))) return [3 /*break*/, 7];
+                request = _a.sent();
+                contentType = request.headers.get("content-type");
+                parsedData = void 0;
+                if (!(contentType === null || contentType === void 0 ? void 0 : contentType.includes("application/json"))) return [3 /*break*/, 9];
                 return [4 /*yield*/, request.json()];
             case 2:
-                responseData = _b.sent();
-                if (!responseData._enc) return [3 /*break*/, 6];
-                if (!token)
-                    throw new Error("Missing token for decryption");
-                _b.label = 3;
+                responseData = _a.sent();
+                if (!responseData._enc) return [3 /*break*/, 7];
+                if (!!token) return [3 /*break*/, 3];
+                parsedData = responseData;
+                return [3 /*break*/, 6];
             case 3:
-                _b.trys.push([3, 5, , 6]);
+                _a.trys.push([3, 5, , 6]);
                 return [4 /*yield*/, decrypt(responseData._enc, token)];
             case 4:
-                decryptedStr = _b.sent();
-                // Zwracamy nową odpowiedź z odszyfrowanym stringiem
-                return [2 /*return*/, new Response(decryptedStr, {
-                        status: request.status,
-                        headers: request.headers, // Zachowujemy oryginalne nagłówki
-                    })];
+                decryptedStr = _a.sent();
+                parsedData = JSON.parse(decryptedStr);
+                return [3 /*break*/, 6];
             case 5:
-                e_1 = _b.sent();
-                console.error("Decryption failed! Key mismatch (did date change?) or corrupted data.", e_1);
-                // W razie błędu zwracamy oryginalny (zaszyfrowany) JSON, żeby nie "ubić" aplikacji całkowicie
-                return [2 /*return*/, new Response(JSON.stringify(responseData), {
-                        status: request.status,
-                    })];
-            case 6: 
-            // Jeśli nie było pola _enc, zwróć oryginalny JSON
-            return [2 /*return*/, new Response(JSON.stringify(responseData), {
-                    status: request.status,
-                    headers: request.headers,
-                })];
-            case 7: return [2 /*return*/, request];
+                e_1 = _a.sent();
+                console.error("Decryption failed!", e_1);
+                parsedData = responseData;
+                return [3 /*break*/, 6];
+            case 6: return [3 /*break*/, 8];
+            case 7:
+                parsedData = responseData;
+                _a.label = 8;
+            case 8: return [3 /*break*/, 11];
+            case 9: return [4 /*yield*/, request.text()];
+            case 10:
+                textData = _a.sent();
+                try {
+                    parsedData = JSON.parse(textData);
+                }
+                catch (_c) {
+                    parsedData = { data: textData };
+                }
+                _a.label = 11;
+            case 11:
+                // --- Normalizacja Formatowania ---
+                // Jeżeli żądanie jest nieudane na poziomie HTTP (np status 403 z ApiGuard lub 500)
+                if (!request.ok) {
+                    errorMessage = (parsedData === null || parsedData === void 0 ? void 0 : parsedData.message) ||
+                        (parsedData === null || parsedData === void 0 ? void 0 : parsedData.error) ||
+                        "HTTP Error ".concat(request.status);
+                    return [2 /*return*/, {
+                            success: false,
+                            data: null,
+                            error: errorMessage,
+                            status: request.status,
+                        }];
+                }
+                // Jeśli sukces, to *ZAWSZE* bezwzględnie zamykamy odpowiedź serwera do property 'data'
+                return [2 /*return*/, { success: true, data: parsedData }];
+            case 12:
+                err_1 = _a.sent();
+                // Kiedy padnie kompletnie np sieć (Network Offline lub parsowanie)
+                return [2 /*return*/, {
+                        success: false,
+                        data: null,
+                        error: (err_1 === null || err_1 === void 0 ? void 0 : err_1.message) || "Wystąpił nieoczekiwany błąd podczas połączenia.",
+                    }];
+            case 13: return [2 /*return*/];
         }
     });
 }); };

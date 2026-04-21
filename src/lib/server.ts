@@ -7,24 +7,33 @@ import {
 } from "@sveltejs/kit";
 import { ApiGuardOptions } from "./types";
 import crypto from "node:crypto";
-import { generateEncryptionKey } from "./utils.js";
+
+const keyCache = new Map<string, Buffer>();
+
+function getEncryptionKey(token: string): Buffer {
+  let key = keyCache.get(token);
+  if (!key) {
+    key = crypto.createHash("sha256").update(token).digest();
+    keyCache.set(token, key);
+  }
+  return key;
+}
 
 function encrypt(text: string, token: string) {
   const iv = crypto.randomBytes(12);
-  const key = crypto.createHash("sha256").update(token).digest();
+  const key = getEncryptionKey(token);
 
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
 
-  let encrypted = cipher.update(text, "utf8");
-  encrypted = Buffer.concat([encrypted, cipher.final()]);
+  const encrypted = cipher.update(text, "utf8");
+  const final = cipher.final();
   const authTag = cipher.getAuthTag();
 
-  // Zwracamy jeden obiekt, ale dane jako Base64
-  return {
-    iv: iv.toString("base64"),
-    data: encrypted.toString("base64"),
-    tag: authTag.toString("base64"),
-  };
+  // Łączymy w jeden bufor: IV (12 bajtów) + zaszyfrowane dane + AuthTag (16 bajtów)
+  const combinedBuffer = Buffer.concat([iv, encrypted, final, authTag]);
+
+  // Zwracamy jako jeden łańcuch znaków w Base64
+  return combinedBuffer.toString("base64");
 }
 
 export const createApiGuard = (options: ApiGuardOptions = {}) => {
@@ -54,19 +63,28 @@ export const createApiGuard = (options: ApiGuardOptions = {}) => {
         path: "/",
         httpOnly: true,
         sameSite: "strict",
-        secure: true,
+        secure: !dev, // W trybie dev (false) ciasteczko NIE będzie miało flagi Secure (działa na http)
       });
     }
 
-    // 2. Blokada dostępu do API
-    if (isApi) {
-      const requestToken = request.headers.get(headerName);
+    // --- DODANE: Przekazanie tokenu do locals dla łatwiejszego dostępu w load ---
+    // @ts-ignore
+    event.locals.apiToken = token;
+    // @ts-ignore
+    event.locals.x_api_guard_token = token;
 
-      // Walidacja: Token musi istnieć i zgadzać się z ciasteczkiem
-      if (!token || !requestToken || requestToken !== token) {
-        throw error(403, {
-          message: "Access Denied: ApiGuard validation failed",
-        });
+    // 2. Blokada dostępu do API w poszukiwaniu x-api-guard-token
+    if (isApi) {
+      // Ignorujemy sprawdzanie dla wewnętrznych zapytań SvelteKita (np. fetch w load)
+      if (!event.isSubRequest) {
+        const requestToken = request.headers.get(headerName);
+
+        // Walidacja: Token musi istnieć i zgadzać się z tym zapisanym w ciasteczku/locals
+        if (!token || !requestToken || requestToken !== token) {
+          throw error(403, {
+            message: "Access Denied: ApiGuard validation failed",
+          });
+        }
       }
     }
 
