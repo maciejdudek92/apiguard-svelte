@@ -22,7 +22,7 @@
 Installation
 
 ```bash
-npm install svelte-apiguard
+npm install apiguard-svelte
 
 ---
 
@@ -32,7 +32,7 @@ Quick Setup
 Add the guard to your `src/hooks.server.ts`:
 
 ```typescript
-import { createApiGuard } from 'svelte-apiguard';
+import { createApiGuard } from 'apiguard-svelte';
 import { dev } from '$app/environment';
 
 const guard = createApiGuard({
@@ -62,7 +62,7 @@ Use `secureFetch` instead of the native `fetch` to automatically handle security
 
 ```svelte
 <script lang="ts">
-    import { secureFetch } from 'svelte-apiguard';
+    import { secureFetch } from 'apiguard-svelte';
 
     async function fetchData() {
         const { success, data, error } = await secureFetch('/api/protected-route');
