@@ -20,6 +20,7 @@
   ],
   "scripts": {
     "build": "svelte-package",
+    "publish": "npm login && npm publish",
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
