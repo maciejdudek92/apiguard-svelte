@@ -1,6 +1,6 @@
 {
   "name": "apiguard-svelte",
-  "version": "1.0.0",
+  "version": "1.0526.1",
   "description": "",
   "type": "module",
   "main": "./dist/index.js",
@@ -8,7 +8,8 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "svelte": "./dist/index.js",
+      "browser": "./dist/client.js",
+      "server": "./dist/server.js",
       "default": "./dist/index.js"
     }
   },
