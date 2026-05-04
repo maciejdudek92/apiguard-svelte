@@ -1,42 +1,48 @@
-#Svelte ApiGuard 🛡️
+# Svelte ApiGuard
 
-**Svelte ApiGuard** is a lightweight, security-focused library for SvelteKit applications. It protects your API routes from unauthorized access and data scraping by implementing transparent **AES-256-GCM encryption** and synchronized token validation.
-
-## Key Features
-
--   🔒 **Automatic Response Encryption**: Encrypts JSON responses from your API routes on-the-fly using AES-256-GCM.
--   🛡️ **Request Validation**: Prevents direct API access from external tools (Postman, curl, or bots) by requiring a session-bound token.
--   ⚡ **Seamless Developer Experience**: Includes a `secureFetch` wrapper that handles decryption and token injection automatically.
--   🚀 **Svelte 5 & Kit Ready**: Built to work perfectly with Svelte 5 snippets, runes, and SvelteKit's standard hooks.
--   🌐 **SSR & CSR Compatible**: Works during both Server-Side Rendering and client-side navigation.
-
----
+**Svelte ApiGuard** is a lightweight security library for SvelteKit. It protects API routes from unauthorized access by implementing synchronized token validation and optional **AES-256-GCM response encryption**.
 
 ## How it works
 
-1.  **Server Side**: A middleware (Hook) intercepts requests to your `/api` routes. It ensures the request contains a valid `x-api-guard-token` matching a secure, HttpOnly cookie. If valid, it encrypts the JSON response before sending it to the client.
-2.  **Client Side**: The `secureFetch` utility automatically retrieves the token from your page data, attaches it to the request headers, and decrypts the encrypted payload once it arrives.
+1. **Server side**: A hook intercepts every request. For API routes (`/api/*`), it requires a `x-api-guard-token` header matching an HttpOnly cookie bound to the session. Mismatches are rejected with `403 Access Denied`. Optionally encrypts JSON responses with AES-256-GCM.
+2. **Client side**: `secureFetch` attaches the token from your page data to every request header and transparently decrypts encrypted responses.
 
 ---
 
-Installation
+## Installation
 
 ```bash
 npm install apiguard-svelte
+```
 
 ---
 
-Quick Setup
+## Setup
 
-### 1. Server-side Hook
-Add the guard to your `src/hooks.server.ts`:
+### 1. `vite.config.ts` — bundle for SSR
+
+Because the package uses SvelteKit virtual modules, it must be included in the SSR bundle:
+
+```typescript
+import { sveltekit } from '@sveltejs/kit/vite';
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+    plugins: [sveltekit()],
+    ssr: {
+        noExternal: ['apiguard-svelte']
+    }
+});
+```
+
+### 2. `src/hooks.server.ts` — protect your API
 
 ```typescript
 import { createApiGuard } from 'apiguard-svelte';
 import { dev } from '$app/environment';
 
 const guard = createApiGuard({
-    dev: dev, // Disables encryption in dev mode if needed
+    dev: dev,       // disables encryption and relaxes cookie in dev
     apiPrefix: '/api'
 });
 
@@ -45,49 +51,88 @@ export const handle = async ({ event, resolve }) => {
 };
 ```
 
-### 2. Pass the Token to the Client
-In your root `src/routes/+layout.server.ts`, pass the generated token to the frontend:
+### 3. `src/routes/+layout.server.ts` — pass the token to the client
 
 ```typescript
 export const load = ({ locals }) => {
     return {
-        apiToken: locals.apiToken // Automatically injected by ApiGuard
+        apiToken: locals.apiToken
     };
 };
 ```
 
+### 4. Client-side wrapper — reliable token injection
 
-3. Usage in Components
-Use `secureFetch` instead of the native `fetch` to automatically handle security:
+`secureFetch` reads the token internally from `$app/state`. In some production environments (e.g. Appwrite, Vercel Edge) this can fail silently because the module resolves in a separate bundle context. The recommended pattern is a thin project-level wrapper that reads the token explicitly via `$app/stores`:
+
+```typescript
+// src/lib/apiguard.ts
+import { secureFetch as _secureFetch } from 'apiguard-svelte';
+import { get } from 'svelte/store';
+import { page } from '$app/stores';
+
+type SecureFetchInit = Parameters<typeof _secureFetch>[1] & { token?: string };
+
+export const secureFetch = <T = any>(
+    input: RequestInfo | URL,
+    init?: SecureFetchInit
+): Promise<T> => {
+    const token = init?.token ?? (get(page).data as Record<string, string>).apiToken;
+    return _secureFetch<T>(input, { ...init, token });
+};
+```
+
+Then import `secureFetch` from `$lib/apiguard` instead of `apiguard-svelte` in your components.
+
+### 5. Usage in components
 
 ```svelte
 <script lang="ts">
-    import { secureFetch } from 'apiguard-svelte';
+    import { secureFetch } from '$lib/apiguard';
 
-    async function fetchData() {
-        const { success, data, error } = await secureFetch('/api/protected-route');
-        
+    async function loadData() {
+        const { success, data, error } = await secureFetch('/api/protected');
         if (success) {
-            console.log('Decrypted data:', data);
-        } else {
-            console.error('Error:', error);
+            console.log(data);
         }
     }
 </script>
-'''
+```
 
 ---
 
-Security Requirements
+## Configuration
 
--   **Secure Context (HTTPS)**: This library relies on the [Web Crypto API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Crypto_API). Browsers only allow access to `crypto.subtle` in **Secure Contexts** (HTTPS or `localhost`).
--   **Local Testing**: When testing on local network IPs (e.g., `192.168.1.x`), ensure you are using HTTPS, otherwise, decryption will fail.
-
-## Configuration Options
+### `createApiGuard(options)`
 
 | Option | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `apiPrefix` | `string` | `/api` | The path prefix to protect. |
-| `cookieName` | `string` | `x-api-guard-token` | Name of the HttpOnly cookie. |
-| `headerName` | `string` | `x-api-guard-token` | Header used for token transmission. |
-| `dev` | `boolean` | `false` | If true, disables encryption for easier debugging. |
+| `apiPrefix` | `string` | `/api` | URL prefix to protect. |
+| `cookieName` | `string` | `x-api-guard-token` | Name of the HttpOnly session cookie. |
+| `headerName` | `string` | `x-api-guard-token` | Header name used for token validation. |
+| `dev` | `boolean` | `false` | Disables AES-256-GCM encryption and sets `secure: false` on the cookie. Pass `dev` from `$app/environment`. |
+
+### `secureFetch<T>(input, init?)`
+
+Drop-in replacement for `fetch`. Additional options in `init`:
+
+| Option | Type | Description |
+| :--- | :--- | :--- |
+| `token` | `string` | Explicit token override. Skips the automatic `page.data` lookup when set. |
+| `fetch` | `typeof fetch` | Custom fetch implementation (e.g. SvelteKit's `event.fetch`). |
+
+Returns a normalized result object:
+
+```typescript
+{ success: true,  data: T }
+{ success: false, data: null, error: string, status: number }
+```
+
+---
+
+## Security notes
+
+- **HTTPS required for encryption**: `crypto.subtle` (used for client-side decryption) is only available in [Secure Contexts](https://developer.mozilla.org/en-US/docs/Web/API/Web_Crypto_API). On plain HTTP, set `dev: true` to disable encryption.
+- **What it protects against**: direct API calls from curl/Postman/bots that don't have the session cookie.
+- **What it does NOT protect against**: a malicious script running in the same browser session (it has access to the same cookies).
+- **Cookie flags**: `HttpOnly`, `SameSite: Strict`, `Secure` (unless `dev: true`).
