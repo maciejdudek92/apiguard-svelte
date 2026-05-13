@@ -1,6 +1,5 @@
 export interface ApiGuardOptions {
-    apiPrefix?: string;
+    apiPrefix?: string | string[];
     cookieName?: string;
-    headerName?: string;
     dev?: boolean;
 }

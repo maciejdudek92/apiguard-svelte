@@ -1,12 +1,12 @@
 import {
   error,
-  Handle,
   ResolveOptions,
   type RequestEvent,
-  type MaybePromise,
 } from "@sveltejs/kit";
 import { ApiGuardOptions } from "./types";
 import crypto from "node:crypto";
+
+type MaybePromise<T> = T | Promise<T>;
 
 const keyCache = new Map<string, Buffer>();
 
@@ -40,9 +40,10 @@ export const createApiGuard = (options: ApiGuardOptions = {}) => {
   const {
     apiPrefix = "/api",
     cookieName = "x-api-guard-token",
-    headerName = "x-api-guard-token",
     dev = false,
   } = options;
+
+  const prefixes = Array.isArray(apiPrefix) ? apiPrefix : [apiPrefix];
 
   return async (
     event: RequestEvent,
@@ -52,7 +53,7 @@ export const createApiGuard = (options: ApiGuardOptions = {}) => {
     ) => MaybePromise<Response>,
   ): MaybePromise<Response> => {
     const { request, url, cookies } = event;
-    const isApi = url.pathname.startsWith(apiPrefix);
+    const isApi = prefixes.some((p) => url.pathname.startsWith(p));
 
     // 1. Zarządzanie tokenem w ciasteczku
     let token = cookies.get(cookieName);
@@ -77,7 +78,7 @@ export const createApiGuard = (options: ApiGuardOptions = {}) => {
     if (isApi) {
       // Ignorujemy sprawdzanie dla wewnętrznych zapytań SvelteKita (np. fetch w load)
       if (!event.isSubRequest) {
-        const requestToken = request.headers.get(headerName);
+        const requestToken = request.headers.get("x-api-guard-token");
 
         // Walidacja: Token musi istnieć i zgadzać się z tym zapisanym w ciasteczku/locals
         if (!token || !requestToken || requestToken !== token) {
@@ -97,7 +98,7 @@ export const createApiGuard = (options: ApiGuardOptions = {}) => {
       response.headers.get("content-type")?.includes("application/json")
     ) {
       const originalData = await response.text();
-      const encryptedData = encrypt(originalData, token); // Twoja funkcja AES
+      const encryptedData = encrypt(originalData, token);
 
       const newHeaders = new Headers(response.headers);
       newHeaders.delete("content-length");

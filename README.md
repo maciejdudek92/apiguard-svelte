@@ -43,7 +43,7 @@ import { dev } from '$app/environment';
 
 const guard = createApiGuard({
     dev: dev,       // disables encryption and relaxes cookie in dev
-    apiPrefix: '/api'
+    apiPrefix: ['/api', '/dashboard'] // or just '/api'
 });
 
 export const handle = async ({ event, resolve }) => {
@@ -107,9 +107,8 @@ Then import `secureFetch` from `$lib/apiguard` instead of `apiguard-svelte` in y
 
 | Option | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `apiPrefix` | `string` | `/api` | URL prefix to protect. |
+| `apiPrefix` | `string \| string[]` | `/api` | URL prefix(es) to protect. |
 | `cookieName` | `string` | `x-api-guard-token` | Name of the HttpOnly session cookie. |
-| `headerName` | `string` | `x-api-guard-token` | Header name used for token validation. |
 | `dev` | `boolean` | `false` | Disables AES-256-GCM encryption and sets `secure: false` on the cookie. Pass `dev` from `$app/environment`. |
 
 ### `secureFetch<T>(input, init?)`

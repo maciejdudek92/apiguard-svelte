@@ -59,15 +59,16 @@ function encrypt(text, token) {
 }
 export var createApiGuard = function (options) {
     if (options === void 0) { options = {}; }
-    var _a = options.apiPrefix, apiPrefix = _a === void 0 ? "/api" : _a, _b = options.cookieName, cookieName = _b === void 0 ? "x-api-guard-token" : _b, _c = options.headerName, headerName = _c === void 0 ? "x-api-guard-token" : _c, _d = options.dev, dev = _d === void 0 ? false : _d;
-    return function (event, resolve) { return __awaiter(void 0, void 0, void 0, function () {
+    var _a = options.apiPrefix, apiPrefix = _a === void 0 ? "/api" : _a, _b = options.cookieName, cookieName = _b === void 0 ? "x-api-guard-token" : _b, _c = options.dev, dev = _c === void 0 ? false : _c;
+    var prefixes = Array.isArray(apiPrefix) ? apiPrefix : [apiPrefix];
+    return function (event, resolve) { return __awaiter(void 0, void 0, MaybePromise, function () {
         var request, url, cookies, isApi, token, requestToken, response, shouldEncrypt, originalData, encryptedData, newHeaders;
         var _a;
         return __generator(this, function (_b) {
             switch (_b.label) {
                 case 0:
                     request = event.request, url = event.url, cookies = event.cookies;
-                    isApi = url.pathname.startsWith(apiPrefix);
+                    isApi = prefixes.some(function (p) { return url.pathname.startsWith(p); });
                     token = cookies.get(cookieName);
                     if (!token) {
                         token = crypto.randomUUID();
@@ -87,7 +88,7 @@ export var createApiGuard = function (options) {
                     if (isApi) {
                         // Ignorujemy sprawdzanie dla wewnętrznych zapytań SvelteKita (np. fetch w load)
                         if (!event.isSubRequest) {
-                            requestToken = request.headers.get(headerName);
+                            requestToken = request.headers.get("x-api-guard-token");
                             // Walidacja: Token musi istnieć i zgadzać się z tym zapisanym w ciasteczku/locals
                             if (!token || !requestToken || requestToken !== token) {
                                 throw error(403, {
